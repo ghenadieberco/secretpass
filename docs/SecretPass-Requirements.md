@@ -1,0 +1,408 @@
+# SecretPass — Product Requirements Document
+
+**Version:** 1.2 (Draft)
+**Status:** Pre-development
+**Owner:** Ghenadie Berco
+**Last updated:** 14 August 2026
+
+---
+
+## 1. Overview
+
+SecretPass is a cross-platform password manager built to be sold as a subscription product. It stores a user's credentials, generates strong passwords, and produces TOTP (2FA) codes, all protected by a zero-knowledge encryption model — SecretPass's servers never see plaintext vault data.
+
+**Goals for v1:**
+- Ship a trustworthy, secure vault core on the platforms that matter most to early users.
+- Prove out the subscription business model.
+- Keep the v1 feature set narrow enough to ship, review, and (critically) get security-reviewed before wide release.
+
+**Non-goals for v1:** family/team sharing, breach monitoring, desktop-native apps (Windows/macOS/Linux), secure notes/card storage. These are explicitly deferred — see Section 7.
+
+---
+
+## 2. Target Platforms
+
+| Platform | Priority | Delivery mechanism |
+|---|---|---|
+| iOS | v1 | Flutter app, App Store |
+| Android | v1 | Flutter app, Google Play |
+| Web | v1 | Flutter web build; also serves as the "desktop" experience via browser |
+| Browser extension | v1 | **Chrome only** at launch (Manifest V3). Edge and other Chromium browsers accept the same package with minimal change; Firefox and Safari are post-v1. Separate lightweight JS codebase |
+| Windows / macOS / Linux (native) | Post-v1 | Flutter desktop build, once mobile+web are stable |
+
+The web app is the intended desktop experience for v1 — it covers the "must work on desktop" requirement without the extra QA burden of three native desktop builds before the product is proven.
+
+---
+
+## 3. User Persona (v1)
+
+A single individual (not a family or team) who currently uses browser-saved passwords or a spreadsheet, wants a real password manager, and is willing to pay a small subscription for cross-device sync, autofill, and 2FA codes in one place.
+
+---
+
+## 4. Functional Requirements
+
+### 4.1 Core vault (baseline — required for the product to function at all)
+- Create, read, update, delete vault items.
+- Search and filter vault items by title, username, email, or website.
+- Organize items with folders or tags.
+- Vault syncs across all of a user's signed-in devices.
+- Local copy of the vault is available offline; changes sync when connectivity returns.
+
+**Vault item fields:**
+
+| Field | Required | Notes |
+|---|---|---|
+| Title | **Yes** | Display name in the list; needed so items are identifiable and searchable |
+| Email | No | |
+| Username | No | Separate from email — many services use both |
+| Password | No | |
+| Website | No | Also used to match the item during browser autofill |
+| Note | No | Free-text |
+| TOTP secret | No | Stored per item; see 4.4 |
+
+All fields except Title are optional — an item may be saved with only a title filled in. Empty fields are hidden in the item detail view rather than shown blank.
+
+### 4.2 Password generator
+- Generate random passwords with configurable length, character sets (upper/lower/numbers/symbols), and ambiguous-character exclusion.
+- One-tap copy to clipboard (with auto-clear after a short delay).
+- Generator accessible standalone (not just when creating a vault item) — e.g., for signing up on a site before a vault item exists.
+
+### 4.3 Browser extension / autofill
+- Detect login forms on web pages and offer to fill saved credentials.
+- Offer to save new credentials when a user submits a new login form.
+- Trigger the password generator inline on signup/password-change forms.
+- Extension authenticates to the same account and reads the same encrypted vault as the mobile/web apps.
+
+### 4.4 TOTP / 2FA code storage
+- Store TOTP secrets (via manual entry or QR code scan) alongside the related vault item.
+- Display a live, auto-refreshing 6-digit code with a countdown indicator.
+- One-tap copy of the current code.
+
+### 4.5 Account & subscription
+- Email/password account creation with master password setup. **The master password is fully separate from the account login password** — decided, not conditional. The account password authenticates to Supabase and travels to the server on every sign-in; the master password never leaves the device and derives the vault key. Keeping them separate is what makes a server-side account-password reset a recoverable event rather than silent vault loss.
+- **No customer accounts exist by default.** Every customer must purchase and activate; there is no pre-seeded or shared customer account.
+- **One documented exception: the bootstrap admin account** (4.9). It is created from environment variables on first launch rather than by purchase, it never pays, and it is permanently entitled. It is a full vault user like any customer — the exception is how it comes into existence and how it is entitled, not what it can do. Exactly one such account exists, it is created once, and the bootstrap path disables itself permanently afterwards.
+- SecretPass is paid only: **$5/month or $50/year** (annual saves ~17%). All features — vault, generator, sync, browser extension, TOTP — are included at both price points. There is one tier, and it is paid.
+- **30-day money-back guarantee:** users can request a full refund within 30 days of purchase, no questions asked. This is how someone evaluates SecretPass without risk.
+
+**Account creation: purchase-first provisioning**
+
+No customer account exists until payment succeeds. This is deliberate — because the mobile apps can't show pricing or link to checkout (see below), an unpaid account on mobile would be a dead end with nowhere for the user to go. (The bootstrap admin account is the one exception, per above.)
+
+1. Visitor chooses monthly or yearly on the SecretPass website.
+2. Paddle checkout collects email and payment. No account or password is created at this stage — fewer fields before payment.
+3. On payment success, the **Paddle webhook** provisions the account. The webhook is the source of truth, not the browser redirect: users close tabs and networks drop, and provisioning on redirect loses accounts that were paid for.
+4. An activation email is sent containing a **single-use link, valid for 7 days**.
+5. The user follows the link and completes setup: account password, master password, then the recovery key with its save-confirmation step.
+6. Vault created. The user can now sign in on iOS, Android, or web.
+
+**Activation link rules**
+- Valid 7 days; single-use, consumed once setup completes.
+- **The link expires; the entitlement does not.** An expired link never requires re-purchase.
+- Self-service, unlimited resend from a public page that accepts the email used at checkout. This page is also the recovery path for a mistyped checkout email.
+
+**Failed renewal payments**
+- Paddle's dunning retries run first (typically ~2 weeks of retries at widening intervals).
+- Once Paddle marks the subscription past due, a **7-day grace period** begins. The account stays fully functional throughout.
+- Reminder emails at day 1 and day 5 of grace, each linking to update payment details.
+- The account moves to the lapsed state at day 7. By then the user has had roughly three weeks of notice — sync should never stop as a surprise.
+
+**Self-service cancellation and automatic refunds**
+- Users can cancel their subscription from within the app, at any time, without contacting anyone.
+- **If the cancellation falls within 30 days of the initial purchase, the full refund is issued automatically** via the Paddle API — no admin approval, no support ticket, no developer involvement in the normal path.
+- The cancel flow states plainly which outcome applies before the user confirms: inside the window, "you'll be refunded in full"; outside it, "you'll keep access until [date], and no further payments will be taken."
+- The refund and the resulting state change are driven by Paddle webhooks, so the account transitions to lapsed automatically once the refund settles.
+- Requests that fail at the payment provider must be retried and, if still failing, surfaced in the admin console's "needs attention" queue — the only case where a human sees a refund at all.
+- **Abuse control:** automatic refunds are limited to one per customer. A second refund request from the same account or payment method goes to manual review. Without this, subscribe → import vault → export CSV → refund is a repeatable way to use the product without paying. This is fraud control, not an approval step on the normal path.
+- **Scope of the guarantee:** it applies to the initial purchase. Renewal charges (month two onward, or year two) are not automatically refundable — cancellation stops future billing instead. Note that EU/UK consumer law grants separate statutory withdrawal rights; Paddle as merchant of record handles those obligations, and the Terms must not claim less than the law provides.
+
+**Refunds and chargebacks — handled differently**
+- **Refund** (customer decision, incl. the 30-day guarantee): account moves to the **lapsed state**, not deleted. The vault stays readable on devices it's already on and CSV export remains available, so the user can retrieve credentials they may have migrated in and not backed up elsewhere. Deleting a vault on refund would destroy what may be the only copy of a user's credentials.
+- **Chargeback** (fraud signal): suspend immediately; the account may not resubscribe without review. Same data handling, different account status.
+- **Dormancy horizon:** lapsed vaults are not kept indefinitely. After 90 days lapsed, send warning emails at 90, 97, and 104 days, then delete. This bounds storage and liability without ambushing anyone.
+
+**Payment processing**
+- **One processor for everything: Paddle**, acting as merchant of record. (Lemon Squeezy is a comparable alternative.)
+- **All subscriptions are purchased on the SecretPass website.** There is no in-app purchase on iOS or Android.
+- The mobile and web apps are sign-in only: a user subscribes on the web, then signs in on any platform with an already-paid account.
+- Consequence: no StoreKit, no Google Play Billing, no RevenueCat, no cross-rail entitlement reconciliation, and no duplicate-subscription bugs. One integration, one webhook, one payout.
+- **Tax:** Paddle is the seller of record and handles VAT/GST/sales-tax registration, collection, and remittance globally. SecretPass does not register for tax in the countries it sells into. This is the reason for choosing a merchant of record over Stripe.
+
+**App store constraint — important for the mobile builds**
+- Apple and Google restrict how apps may reference outside purchasing. The US storefront now permits external purchase links, but most other regions do not, and SecretPass is selling globally.
+- The safe design for a global launch: **the mobile apps contain no purchase flow — no "Subscribe" button, no link to checkout, and no pricing shown to anyone who is not already a subscriber.** A signed-out or unentitled user sees a sign-in screen and a neutral message that the account isn't active, without being directed anywhere.
+- **This rule is about purchasing, not about arithmetic.** An existing subscriber may be shown their own plan, their own price, their renewal date, and the exact refund amount in the cancel flow. That is account management, which the stores permit, and the cancel flow cannot be honest without it — "you'll be refunded in full" is a worse disclosure than "you'll be refunded $50". The line to hold: nothing in the app may *initiate or advertise* a purchase; showing a subscriber the terms of the subscription they already bought is fine.
+- "Update payment method" may link out to Paddle's customer portal for an existing subscriber. This is billing management for an active subscription, not an external purchase link, and it is the standard pattern for a merchant-of-record setup.
+- This is a real conversion cost. A user who downloads the app first has to find the website on their own. Plan marketing so that the website, not the app store, is the top of the funnel — see Section 6.1.
+- **Region-gated external purchase links are out of scope permanently, not deferred.** Region-aware links are permitted on the US storefront and would recover some of this conversion, but the decision is to keep every mobile build identical and free of billing UI in all markets. One App Review story, no region-specific behaviour to maintain, and no chance of a region flag shipping wrong. The conversion cost is accepted as the price of that simplicity.
+
+**Lapsed and cancelled subscriptions**
+- When a subscription lapses or is cancelled, the user **must not lose access to their own passwords.** Locking someone out of their credentials over an expired card is both a serious user-harm event and a support and reputation problem.
+- Required behaviour on lapse: the local vault remains readable on the device it is already on, and CSV export remains available. Sync, the browser extension, and new-item creation may be suspended.
+- Deleting or making a paying-customer-turned-lapsed user's vault unreadable is explicitly out of scope and should never be implemented.
+
+### 4.6 Biometric unlock
+- Face ID / Touch ID on iOS, fingerprint or face on Android, in v1.
+- Biometrics unlock a copy of the vault key held in the platform's secure hardware (iOS Keychain with Secure Enclave, Android Keystore), released only on a successful biometric match.
+
+**Vault key lifecycle — stated once, precisely, because both 4.6 and 4.7 depend on it:**
+- **At rest on device:** only inside the Keychain/Keystore, biometric-gated. Never in app preferences, never in the local SQLite file, never in logs.
+- **At rest on the server:** only as ciphertext — two independently wrapped copies (master-password-derived key, recovery key). SecretPass's database never holds the vault key in a usable form.
+- **In memory:** the key *is* held in application memory while the vault is unlocked. This is unavoidable — the secure element gates access to the key but does not perform XChaCha20 on the app's behalf, so decryption requires the key in process memory. Any claim otherwise is false and would not survive cryptographic review.
+- **On lock:** the key and all decrypted items are zeroed from memory (4.7). Minimise the window it exists in, since that window is what a device-level attacker is trying to hit.
+- **Biometrics are a convenience layer over the master password, not a replacement for it.** The master password must still be required:
+  - on first setup and on each new device,
+  - after device restart,
+  - after the auto-lock inactivity period elapses (see 4.7),
+  - after a number of failed biometric attempts,
+  - before any sensitive action: CSV export, viewing the recovery key, changing the master password, deleting the account.
+- Opt-in, and switchable off at any time in settings.
+- If the user's enrolled biometrics change (a new fingerprint or face is added to the device), invalidate the stored key and require the master password again — otherwise anyone who can add their own biometric to an unlocked phone inherits vault access.
+
+### 4.7 Auto-lock
+- The vault re-locks automatically after a period of inactivity. **Default: 5 minutes.**
+- **User-configurable from 1 to 60 minutes**, in settings. The range is capped at both ends: there is no "never" option, because a vault that never re-locks turns a borrowed or stolen unlocked device into full credential access.
+- Independent of the timer, the vault locks immediately when: the app is backgrounded, the device is locked, or the device is restarted. These are not user-configurable and are not affected by the inactivity setting.
+- "Inactivity" means no interaction with the SecretPass app, not device-wide idle time.
+- On re-lock, the decrypted vault and the vault key are cleared from application memory — locking is not merely a UI state change.
+- Unlocking after auto-lock accepts biometrics where enrolled (4.6); the master password is still required in the cases 4.6 enumerates.
+
+### 4.8 Contact page
+- A public contact page with a form. **The destination email address is never displayed** anywhere in the app, the website, the Terms, or the page source.
+- **Must be reachable without signing in.** The people most likely to need support are locked out — expired activation link, mistyped checkout email, failed payment — so a login-gated form would fail exactly the users it exists for.
+- Fields: name (optional), reply-to email (required), subject or category, message. Category options should cover billing, activation problems, and general questions.
+- **The form must state, visibly, that SecretPass support will never ask for a master password, recovery key, or vault contents.** Support channels for password managers are a standard phishing target; saying this up front on every contact is cheap and sets the expectation that any message asking for those things is fraudulent.
+- Confirmation on submit, plus an auto-acknowledgement email, so users know the message arrived and don't resend.
+- Spam protection: rate limiting per IP, a honeypot field, and a CAPTCHA only if abuse warrants it.
+- Outbound replies come from a support sender address, not from the destination inbox — the destination must not leak via reply headers.
+
+### 4.9 Admin console
+A separate web console for operating the service. Ships in v1.
+
+**Access model**
+- **Single admin account.** No multi-admin or role hierarchy in v1.
+- **The admin is a full vault user as well as an operator.** The admin account has its own vault and access to every user-facing feature — vault CRUD, generator, TOTP, sync, browser extension, biometric unlock, CSV import/export — exactly as a paying customer does. The admin console is an *additional* capability layered on that account, not a replacement for it. The admin's capabilities are a strict superset of a regular user's.
+- The admin's vault is entitled permanently and is not tied to a Paddle subscription. Entitlement checks must treat it as always-active without a `subscriptions` row, and it must never enter the past_due/grace/lapsed state machine or the 90-day dormancy deletion job.
+- Admin must enroll 2FA before the console becomes usable. The vault side of the account is usable before console 2FA enrollment; the console is not.
+- Entering the console requires a fresh 2FA challenge, separate from the app session. An unlocked vault does not imply an open console, and vice versa.
+- All admin actions are written to an append-only audit log.
+
+**The admin's own vault does not weaken the zero-knowledge boundary — provided one rule holds**
+
+The admin having a personal vault is safe, and it is safe for exactly the reason every other user's vault is: it is encrypted client-side under the admin's own master password, which the server never receives. The admin can read their own vault for the same reason you can read yours. What must not happen is the console's privileges bleeding into vault access.
+
+Concretely:
+- The admin reads their own vault **only through the normal client apps**, decrypting client-side with their own master password — the identical code path every user takes. Never through the console.
+- **The console's database role retains zero read access to vault ciphertext columns — including the admin's own rows.** This is unchanged from the original design and remains enforced in Postgres permissions, not application code. The console cannot display a vault, any vault, including its operator's.
+- The admin's master password is separate from both the account login password and the console credential (4.5). Console access confers no vault access, and the audit log records console actions only — it must never log vault contents or anything derived from them.
+- Row-level security applies to the admin's user account like any other: as a vault user, the admin can read only rows where `user_id` matches their own session.
+
+The hard constraint below is therefore untouched. "Admin has a vault" means *the admin has a vault of their own*, not *the admin can open vaults*.
+
+**Bootstrapping the initial admin**
+- On first launch, the app reads `SECRETPASS_ADMIN_EMAIL` and `SECRETPASS_ADMIN_PASSWORD` from the environment and creates the admin account **only if no admin already exists**.
+- Once an admin exists, the bootstrap path permanently disables itself and the environment variables are ignored.
+- No default credentials are ever shipped in the repository or the built application.
+- The admin is forced to change the bootstrap password and enroll 2FA on first sign-in.
+- On first sign-in the admin also completes ordinary vault setup — master password, then the recovery key with its save-confirmation step — because the admin is a vault user (see above). The bootstrap environment variables set the account login password only; they must never be usable to derive a vault key.
+- **The admin's own vault is as unrecoverable as anyone else's.** If the operator loses their master password and recovery key, their vault is gone, and the console provides no override — there is nothing in the console that could provide one. Treat the operator's recovery key as production infrastructure and store it accordingly.
+- Deployment docs must instruct operators to remove the environment variables after first launch.
+
+**What the admin CAN do**
+
+*As a vault user (through the normal client apps, never through the console):*
+- Everything a paying customer can do: vault CRUD, search, folders/tags, password generator, TOTP, sync across devices, browser extension, biometric unlock, CSV import and export — all against their **own** vault only.
+
+*As an operator (through the console):*
+- List, search, suspend, and delete user accounts.
+- View subscription and billing status; handle failed payments and refunds.
+- View service metrics: signups, active devices, sync volume, error rates.
+- Trigger support actions: resend verification email, initiate account deletion.
+- Review the admin audit log.
+
+**What the admin CANNOT do — hard constraint**
+- Read, decrypt, or export **any other user's** vault contents.
+- Read any vault — including their own — *through the console*. Vault access happens only in the client apps, under the admin's own master password.
+- Reset a user's master password.
+- Recover a user's vault under any circumstance, their own included.
+
+This is not a policy choice that can be relaxed later for support convenience. If an admin can decrypt vaults, the zero-knowledge claim in the Terms of Service (4.11) is false and a single compromised admin account becomes a total breach of every customer. Support's only answer to "I lost my master password" is the recovery key (4.10).
+
+Granting the admin a personal vault does not soften this. The admin gains a vault *of their own*, encrypted under a master password the server never sees, on the same terms as every other user — they gain no ability to open anyone else's. The distinction to hold onto: the operator wears two hats on one account, and the console hat can never see vault data.
+
+### 4.10 Account recovery
+- At account creation, SecretPass generates a **recovery key** — a high-entropy secret shown to the user once, to be saved offline.
+- The recovery key can independently unlock the vault if the master password is forgotten. It is generated and held client-side; SecretPass's servers never receive it.
+- If a user loses both the master password and the recovery key, the vault is unrecoverable. There is no support-side exception path — any such path would be a backdoor into every user's vault.
+- Setup flow must make the recovery key impossible to skip past accidentally: show it once, require an explicit confirmation that it's been saved.
+- **Out of scope:** trusted-contact / emergency access. Considered and deliberately dropped from v1.
+
+### 4.11 Terms of Service
+- A Terms of Service page written in plain, human language — it should explain how the vault works and what the recovery tradeoff means, not read as boilerplate.
+- Accessible from within the app at any time (Settings), and at both consent points below.
+
+**Consent is captured twice, because purchase-first splits signup across two moments**
+
+Purchase happens on the website; the vault is created later, at activation. Neither moment alone is sufficient, so both carry a mandatory checkbox:
+
+1. **At web checkout, before payment.** Agreement is required to proceed to Paddle. This is the commercially meaningful consent — it happens before money changes hands, which is where a consumer-law challenge would look.
+2. **At activation, before the vault is created.** Agreement is required to complete setup. This is where the unrecoverable-vault warning actually means something, because it is the moment the user sets a master password and is shown a recovery key. At checkout they have no mental model of either yet.
+
+- At both points, an unchecked box blocks progress, with an inline error if the user tries to continue.
+- The Terms open in a popup/modal in both flows — the user must not have to leave the flow or open a browser to read them.
+- The agreement checkbox text must state the unrecoverable-vault consequence explicitly, not bury it. The activation-time wording should be the more concrete of the two, since the user is holding a recovery key when they read it.
+- Record both agreements server-side with a timestamp and the Terms version agreed to. "Which version did they accept, and when" is the only question that matters if this is ever disputed, and it is unanswerable retroactively.
+- **Content constraint:** the Terms explain the security model in concept (device-side encryption, zero knowledge, no recoverable master password) but must not publish operational detail useful to an attacker — no algorithm parameters, recovery-key format or length, session/token handling, rate limits, or lockout thresholds. If you want to publish that for transparency, it belongs in a separately reviewed security whitepaper.
+
+### 4.12 CSV import and export
+**Import**
+- Import vault items from a CSV file (migration from another password manager or a spreadsheet).
+- Column-mapping step: the user maps the source file's columns onto SecretPass's fields before anything is written, with an option to skip columns.
+- Show a preview and item count before committing; import is all-or-nothing so a bad mapping doesn't half-populate the vault.
+- Malformed rows are reported rather than silently dropped.
+
+**Export**
+- Export the full vault to CSV.
+- Re-authentication (master password) required before an export runs.
+- **The UI must clearly warn that a CSV export is unencrypted plaintext** — every password in the file is readable by anyone who opens it. This warning is a requirement, not optional polish: it is the single largest self-inflicted risk the product exposes to users.
+- Recommend (and default to) prompting the user to delete the file once migration is complete.
+
+### 4.13 Account deletion
+
+Required independently by both app stores: an app that supports account creation must offer in-app account deletion, not merely a support request. It is also promised in the Terms.
+
+- **Self-service, from within the app.** No support ticket, no email, no contacting anyone — the same standard as cancellation (4.5).
+- Requires master-password re-authentication before it runs, per 4.6.
+- The confirmation screen must state plainly and before the user commits: the vault is destroyed, SecretPass holds no readable copy and cannot restore it, and this is irreversible in a way that a forgotten password is not.
+- **Offer a CSV export from the deletion confirmation screen itself.** Deleting a vault is the single most destructive action in the product, and the user may be deleting the only copy of credentials they migrated in. Do not make them find the export screen first.
+- On deletion: remove vault items, folders, sync log, wrapped key copies, and the user record. Cancel any active subscription through Paddle as part of the same flow, so deletion doesn't leave a subscription billing against a vault that no longer exists.
+- Deletion is distinct from cancellation (4.5) and from lapsing. Cancelling stops billing and keeps the vault; deleting destroys it. The UI must never let one be mistaken for the other.
+- Retain the minimum billing and tax records Paddle requires as merchant of record. These contain no vault data.
+
+### 4.14 Privacy Policy
+
+- A published Privacy Policy, separate from the Terms of Service, covering what is collected, why, how long it's retained, who processes it (Supabase, Paddle, the transactional email provider), and how to request deletion.
+- **Required by both app stores before submission** — a missing or unreachable policy is a rejection, regardless of what the Terms say.
+- Reachable without signing in, from the marketing site, the app's settings screen, and both store listings.
+- Must state the same thing the Terms do about vault contents: SecretPass cannot read them, so they are not collected in any usable sense. The policy should be consistent with the Terms' Section 7, not a separately drafted account of the same facts.
+- Same content constraint as the Terms (4.11): explain the model, don't publish operational security detail.
+
+---
+
+## 5. Non-Functional Requirements
+
+### 5.1 Security (highest priority — see Implementation Plan for technical detail)
+- Zero-knowledge architecture: the server stores only encrypted blobs; the master password (or a key derived from it) never leaves the device unencrypted.
+- Industry-standard, well-vetted cryptography only — no custom/home-grown crypto primitives.
+- Master password is never recoverable by SecretPass; account recovery flows must not create a backdoor into the vault.
+- Clipboard contents from copy actions (passwords, TOTP codes) auto-clear after a short timeout.
+- All network traffic over TLS; certificate pinning on mobile where feasible.
+
+### 5.1.1 Security testing requirements
+
+Security testing is a release gate, not a phase that can slip. The requirements below are conditions of launch.
+
+**Documentation before testing**
+- A written threat model exists before the security review begins, covering: a stolen device, a compromised sync server, a malicious or compromised admin account (including the admin's dual role as a vault user, per 4.9), a hostile network, a malicious CSV import, a compromised browser extension, and a compromised support channel.
+- A cryptographic design document describing key derivation, key wrapping, the recovery-key path, and the sync protocol — the artifact a reviewer reads first.
+
+**Automated testing, running continuously in CI**
+- **Static analysis (SAST)** on every commit for the Flutter app, the extension, and backend functions.
+- **Dependency and supply-chain scanning (SCA)** with builds failing on known-vulnerable packages. A password manager inherits the security of everything it imports.
+- **Secret scanning** on every commit and across git history, to catch committed keys, tokens, or the admin bootstrap credentials.
+- **Cryptographic test vectors** shared between the Flutter app and the extension: both must produce and consume identical ciphertext for the same inputs. A cross-implementation mismatch is a data-loss bug, not just a security one.
+- **Authorization tests** proving Supabase row-level security actually isolates users — that user A cannot read user B's rows through any API path, including direct PostgREST calls.
+- **Admin-boundary tests** proving the admin console's database role cannot read vault ciphertext. This must be an automated test that fails the build, not a code review convention. Because the admin is also a vault user (4.9), these tests must additionally prove the dual role does not widen access: an admin-authenticated session reads its own vault rows and no one else's, and the console role reads no ciphertext at all.
+
+**Manual testing before launch**
+- **Third-party penetration test** covering the sync API, authentication and session handling, the activation and password-reset flows, the payment webhook path, the admin console, and the browser extension.
+- **Independent cryptographic review** of the encryption design and its implementation, by someone who did not write it.
+- **Mobile application security testing** against the OWASP MASVS/MASTG checklist: local storage, keychain and keystore usage, biometric binding, screenshot and background-snapshot leakage, clipboard behaviour, logging, and anti-tampering basics.
+- **Web and API testing** against OWASP ASVS, at the level appropriate for an application handling credentials.
+- **Browser extension review**: content-script isolation, message-passing between the page and the extension, autofill target validation (the extension must not fill credentials into a look-alike domain), and permission scope.
+- **Business-logic testing** of the paths where money and access meet: refund abuse, entitlement bypass, activation-token reuse, subscription-state race conditions.
+
+**Release gate**
+- No open critical or high findings at launch. Medium findings are documented with an owner and a target date.
+- Every fix is **re-tested by the original tester**, not signed off internally.
+- Test reports and remediation evidence are retained.
+
+**After launch**
+- Dependency and secret scanning continue on every commit.
+- Penetration test repeated at least annually, and after any change to the cryptographic design, the sync protocol, or the admin console.
+- A published **responsible disclosure policy** with a security contact, before launch. Researchers will find things; give them a route that isn't the support form.
+- A written incident response plan covering who is notified, how users are told, and the disclosure timeline.
+
+### 5.2 Performance
+
+Unlock has two distinct paths with very different costs, and holding both to one number would force the key derivation to be weakened to hit a UX target. They are budgeted separately:
+
+- **Biometric unlock: under 2 seconds** from cold start on a mid-range device. This path unwraps the vault key from the Keychain/Keystore and runs no key derivation, so it is the fast path and the one users hit most often.
+- **Master-password unlock: under 4 seconds** from cold start on a mid-range device, of which the Argon2id derivation is the dominant cost. This is deliberately looser. Argon2id is slow *by design* — that slowness is the defence against offline brute-forcing of a stolen vault, so trading it away for a faster unlock trades away the protection it exists to provide.
+- **Argon2id parameters are chosen on security grounds first**, then measured. If the measured unlock time exceeds this budget on target hardware, revisit the budget before revisiting the parameters, and never tune the KDF down purely to hit a performance number. Record the chosen parameters and measured times in the cryptographic design document (5.1.1).
+- Search across a vault of 500+ items returns results in under 200ms. Search runs in memory against the already-decrypted vault (items are stored as single encrypted blobs and are not SQL-queryable by field), so this budget applies to filtering, not decryption.
+
+### 5.3 Availability & sync
+- Sync backend targets high availability; local-first design means the app remains usable during backend outages, with sync resuming automatically after.
+
+### 5.4 Usability
+- Biometric unlock is in scope for v1 — see 4.6.
+- Auto-lock defaults to 5 minutes and is user-configurable from 1 to 60 minutes — see 4.7. Biometrics are what keep a short default from being punishing: the security setting and the convenience feature have to be designed as a pair, not separately.
+
+---
+
+## 6. Monetization
+
+- **Model:** Paid subscription only. A single tier — there is no unpaid version of SecretPass.
+- **Pricing:** $5/month, or $50/year.
+- **What's included:** everything — vault, password generator, multi-device sync, browser extension, TOTP storage. There is no feature gating between tiers because there is only one tier.
+- **Markets:** global from launch.
+- **Rail:** Paddle web checkout only, on all platforms. No in-app purchase.
+- **Guarantee:** 30-day money-back, in place of a trial.
+- **Provisioning:** purchase-first — the account is created by the payment webhook, not by a signup form.
+- **Entitlement:** one subscription covers every platform. Because all purchasing happens on the website through Paddle, entitlement is a single boolean on the user record that all clients read — there are no store rails to reconcile and no cross-rail entitlement problem to solve.
+
+### 6.1 Acquisition
+
+The mobile apps cannot sell or link to a subscription (see 4.5), and that constraint is now permanent. The app store is therefore never the top of the funnel — it is where an already-paying user goes to install the client. Everything below exists to make the website the first thing a prospective customer encounters.
+
+All four of the following are in the launch plan:
+
+- **Search / SEO on the marketing site.** Own the search intent this product is bought on: password manager comparisons, and migration guides ("moving off LastPass/1Password/browser-saved passwords"). Costs nothing per visitor and compounds, but takes months to rank — so it starts before launch, not after.
+- **Paid acquisition to a checkout landing page.** Search and social ads pointing directly at the Paddle checkout, bypassing the stores entirely. This is the only channel that gives a fast read on whether $5/month actually converts, which is worth paying for early even at negative margin per install.
+- **Migration-targeted positioning.** Users already leaving another password manager are the highest-intent segment and they search the web rather than browse the app store, so they land on the site by default. CSV import (4.12) is the feature that closes them and should be prominent in the marketing copy, not buried as a settings-screen utility.
+- **App store listing as a redirect, not a dead end.** No purchase link may appear in the app *binary*, but the store listing description is ours: it must state plainly that accounts are created on the SecretPass website. This does not recover users who never look at the listing, but it stops the silent drop-off from people who found the app first, installed it, and hit a sign-in screen for an account they have no way to create.
+
+---
+
+## 7. Out of Scope for v1 (explicitly deferred)
+
+- Secure notes and payment card storage.
+- Family/team vault sharing.
+- Breach monitoring / dark-web alerts.
+- Native desktop apps (Windows/macOS/Linux) — web app covers this need for v1.
+- Emergency access via trusted contacts (considered during planning, dropped — recovery key is the sole backup path).
+
+---
+
+## 8. Resolved Decisions
+
+The questions previously open in this section have been decided. Recorded here with their outcomes so the reasoning isn't lost:
+
+| Question | Decision | Where it lives now |
+|---|---|---|
+| Auto-lock timeout and configurability | 5-minute default, user-configurable 1–60 minutes, no "never" option | 4.7 |
+| Master password separate from account login? | **Fully separate.** Not conditional on feasibility | 4.5, Implementation Plan 2.1 |
+| Exact pricing for the "Premium tier" | Void — there is no Premium tier. Single tier at $5/month or $50/year | 4.5, 6 |
+| Region-gated external purchase links on the US storefront | **Dropped permanently**, not deferred. Mobile builds stay identical and billing-free in every market | 4.5 |
+| Driving users to the website rather than the app stores | Four committed channels: SEO, paid acquisition, migration positioning, and store-listing redirect | 6.1 |
+| Legal review of the Terms of Service | Launching on the current plain-language copy; lawyer review scheduled post-launch | Below |
+
+**Legal review — decision and its consequences.** SecretPass will launch on the existing plain-language Terms, with a lawyer engaged after launch rather than before. This is a deliberate, informed trade of legal exposure for launch speed, and the exposure should be named rather than left implicit: the current copy has no jurisdiction or governing-law clause, has not been checked against consumer-protection law in the markets it sells into, does not carry the subscription and auto-renewal disclosures that several regions require, and lacks the app-store-specific terms Apple and Google expect. The Terms document's closing note lists the sections most affected (4, 5, 8, 9).
+
+Two mitigations make this materially cheaper than it sounds, and both are already in the design: Paddle is merchant of record, which puts statutory withdrawal rights, tax, and much consumer-law compliance on Paddle rather than on SecretPass; and the 30-day automatic refund is more generous than most jurisdictions require, so the commercial terms are unlikely to be the thing that draws a complaint. Book the review early enough that any required changes land as a routine Terms update under Section 10, rather than as a response to a complaint.
+
+## 9. Still Open
+
+- Nothing blocking. New questions get added here as they arise.
