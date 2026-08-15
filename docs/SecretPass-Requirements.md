@@ -1,6 +1,6 @@
 # SecretPass — Product Requirements Document
 
-**Version:** 1.3 (Draft)
+**Version:** 1.4 (Draft)
 **Status:** Pre-development
 **Owner:** Ghenadie Berco
 **Last updated:** 14 August 2026
@@ -320,10 +320,13 @@ Purchase happens on the website; the vault is created later, at activation. Neit
 - Re-authentication (master password) required before an export runs.
 - **The UI must clearly warn that a CSV export is unencrypted plaintext** — every password in the file is readable by anyone who opens it. This warning is a requirement, not optional polish: it is the single largest self-inflicted risk the product exposes to users.
 - Recommend (and default to) prompting the user to delete the file once migration is complete.
+- **Export is also the data-loss backstop for the pre-audit period (5.1.1).** Until the external review lands, export is the only mechanism by which a user whose vault is damaged by a bug can recover their credentials. Treat it as a reliability feature during v1 rather than only a migration convenience, and do not gate it behind anything beyond the master-password re-authentication above.
 
 ### 4.13 Account deletion
 
 Required independently by both app stores: an app that supports account creation must offer in-app account deletion, not merely a support request. It is also promised in the Terms.
+
+**This requirement does not depend on shipping to a store.** The GDPR right to erasure applies to SecretPass as data controller regardless of distribution channel or legal form, and it applies from the first EU customer. A web-only v1 with no legal entity carries the identical obligation — absent a company, the controller is the founder personally. Account deletion is therefore not deferrable alongside the store work.
 
 - **Self-service, from within the app.** No support ticket, no email, no contacting anyone — the same standard as cancellation (4.5).
 - Requires master-password re-authentication before it runs, per 4.6.
@@ -337,6 +340,7 @@ Required independently by both app stores: an app that supports account creation
 
 - A published Privacy Policy, separate from the Terms of Service, covering what is collected, why, how long it's retained, who processes it (Supabase, Paddle, the transactional email provider), and how to request deletion.
 - **Required by both app stores before submission** — a missing or unreachable policy is a rejection, regardless of what the Terms say.
+- **Also required independently of any store.** GDPR obliges a published policy from the first EU customer, and SecretPass sells globally from launch (6). A web-only v1 with no legal entity still needs one, because the obligation attaches to whoever is the data controller — which, absent a company, is the founder personally. Cost is zero; omission is the cheapest possible compliance failure.
 - Reachable without signing in, from the marketing site, the app's settings screen, and both store listings.
 - Must state the same thing the Terms do about vault contents: SecretPass cannot read them, so they are not collected in any usable sense. The policy should be consistent with the Terms' Section 7, not a separately drafted account of the same facts.
 - Same content constraint as the Terms (4.11): explain the model, don't publish operational security detail.
@@ -354,7 +358,11 @@ Required independently by both app stores: an app that supports account creation
 
 ### 5.1.1 Security testing requirements
 
-Security testing is a release gate, not a phase that can slip. The requirements below are conditions of launch.
+**Security testing runs on two tracks, and v1 ships only the first.** The automated and self-directed half costs nothing, runs from Phase 0 onward, and is a hard condition of launch. The paid half — third-party penetration testing and independent cryptographic review — is **deferred to v2** (see 7).
+
+The reason is scale, not principle: the two engagements together cost hundreds of times the monthly running cost of the entire service (Implementation Plan 6.1), and cannot be funded before the product has demonstrated that anyone will pay for it. The trade is recorded in 8.
+
+**The exposure is named rather than left implicit.** v1 ships with no external validation of the cryptographic design — including the split derivation introduced in 4.5, which is new in v1.3 and is the one place the password model touches the zero-knowledge boundary. Three things compensate, and all three are conditions of launch rather than aspirations: every automated control below is free and therefore not deferred at all; the launch surface is narrowed; and the disclosure posture is honest (5.1.2).
 
 **Documentation before testing**
 - A written threat model exists before the security review begins, covering: a stolen device, a compromised sync server, a malicious or compromised admin account (including the admin's dual role as a vault user, per 4.9), a hostile network, a malicious CSV import, a compromised browser extension, a compromised support channel, **a compromised web delivery path**, and **a malicious application requesting autofill**.
@@ -369,26 +377,42 @@ Security testing is a release gate, not a phase that can slip. The requirements 
 - **Authorization tests** proving Supabase row-level security actually isolates users — that user A cannot read user B's rows through any API path, including direct PostgREST calls.
 - **Admin-boundary tests** proving the admin console's database role cannot read vault ciphertext. This must be an automated test that fails the build, not a code review convention. Because the admin is also a vault user (4.9), these tests must additionally prove the dual role does not widen access: an admin-authenticated session reads its own vault rows and no one else's, and the console role reads no ciphertext at all.
 
-**Manual testing before launch**
-- **Third-party penetration test** covering the sync API, authentication and session handling (including the client-side derivation of the server-facing auth value, 4.5), the activation and recovery-key flows, the payment webhook path, the admin console, the browser extension, and the Android autofill service.
-- **Independent cryptographic review** of the encryption design and its implementation, by someone who did not write it.
-- **Mobile application security testing** against the OWASP MASVS/MASTG checklist — **Android only for v1**: local storage, Keystore usage, biometric binding and key invalidation, screenshot and background-snapshot leakage, clipboard behaviour, logging, and anti-tampering basics.
+**Self-directed manual testing before launch — the v1 gate. All of it is free, and none of it is deferred.**
+- **Mobile application security self-testing** against the OWASP MASVS/MASTG checklist, if and when Android ships — local storage, Keystore usage, biometric binding and key invalidation, screenshot and background-snapshot leakage, clipboard behaviour, logging, and anti-tampering basics. The checklist is public and self-application is free; only the formal third-party assessment is deferred.
 - **Autofill target validation, on both implementations** (4.3): that the browser extension will not fill into a look-alike domain, and that the Android service will not fill into an application whose signing certificate fails Digital Asset Links verification against the target domain. **Test this with a deliberately built look-alike app and a deliberately registered look-alike domain, not by code inspection.** Across both platforms this is the highest-severity defect class the product can ship.
 - **Autofill lock-boundary testing** (4.3.3): confirm that an autofill request against a locked vault prompts for authentication, that the key is not retained after the request is serviced, and that servicing a fill does not extend the auto-lock inactivity timer.
 - **Web and API testing** against OWASP ASVS, at the level appropriate for an application handling credentials.
 - **Browser extension review**: content-script isolation, message-passing between the page and the extension, autofill target validation (the extension must not fill credentials into a look-alike domain), and permission scope.
 - **Business-logic testing** of the paths where money and access meet: refund abuse, entitlement bypass, activation-token reuse, subscription-state race conditions.
 
-**Release gate**
-- No open critical or high findings at launch. Medium findings are documented with an owner and a target date.
-- Every fix is **re-tested by the original tester**, not signed off internally.
-- Test reports and remediation evidence are retained.
+**Release gate (v1)**
+- No open critical or high findings **from the automated and self-directed testing above** at launch. Medium findings are documented with an owner and a target date.
+- Test reports and remediation evidence are retained, self-directed testing included — they become the starting point for the v2 external review rather than something rewritten for it.
+- Re-testing by the original tester belongs to the third-party engagements and moves to v2 with them. Self-directed findings are re-tested by re-running the automated suite, which is precisely why the automated controls are a hard gate and not a convenience.
 
-**After launch**
+**After launch (v1)**
 - Dependency and secret scanning continue on every commit.
-- Penetration test repeated at least annually, and after any change to the cryptographic design, the sync protocol, or the admin console.
-- A published **responsible disclosure policy** with a security contact, before launch. Researchers will find things; give them a route that isn't the support form.
-- A written incident response plan covering who is notified, how users are told, and the disclosure timeline.
+- A published **responsible disclosure policy** with a security contact, before launch. Free, and it matters more without a penetration test rather than less: in v1, researchers are the external review. Give them a route that isn't the support form.
+- A written incident response plan covering who is notified, how users are told, and the disclosure timeline. Writing it during an incident is too late, and an unaudited product should assume it is likelier to need one.
+
+**Deferred to v2 (see 7) — the paid engagements**
+- **Third-party penetration test** covering the sync API, authentication and session handling (including the client-side derivation of the server-facing auth value, 4.5), the activation and recovery-key flows, the payment webhook path, the admin console, the browser extension, and the Android autofill service.
+- **Independent cryptographic review** of the encryption design and its implementation, by someone who did not write it. Point the reviewer at the split derivation in Implementation Plan 2.1 first.
+- **Formal OWASP MASVS/MASTG assessment** of the Android build.
+- **Re-test by the original tester** of every fix arising from the above.
+- Thereafter, penetration test repeated at least annually and after any change to the cryptographic design, the sync protocol, or the admin console.
+
+**The trigger for v2 is not a date.** Whichever comes first: revenue that covers the engagements (Implementation Plan 6.1 puts this at roughly 245 subscribers), or distribution to users who did not knowingly opt into an unaudited product — which in practice means a public app-store listing.
+
+### 5.1.2 Disclosure posture — what v1 may and may not claim
+
+v1 ships without third-party validation (5.1.1). That is a legitimate position for a trial launch, and it remains legitimate only for as long as nothing SecretPass publishes implies otherwise. This is the cheapest requirement in this document and the one whose breach carries the most direct legal exposure.
+
+- **Never claim, in any channel, that SecretPass has been "independently audited", "penetration tested", "security reviewed", or "third-party verified"** until it has been. This covers the marketing site, the store listings, the Terms, the Privacy Policy, in-app copy, and all advertising and social creative.
+- Describing the *design* accurately is always permitted and encouraged — zero-knowledge architecture, client-side encryption, Argon2id, XChaCha20-Poly1305, the two-level key hierarchy. What may not be implied is external validation of that design.
+- **State the pre-audit status plainly** to anyone signing up during the trial phase, at the same point the Terms consent is captured (4.11). A user who knows they are an early adopter of an unaudited security product and chose it anyway is in a completely different position, ethically and legally, from one who assumed otherwise.
+- The residual-risk disclosure already required for the web delivery path (5.1.1) is the model for tone: state the limitation, do not soften it.
+- When the v2 engagements complete these claims become available — and the cryptographic design document written for v1 is what makes them cheap to substantiate.
 
 ### 5.2 Performance
 
@@ -447,6 +471,13 @@ With iOS deferred (see 2), three of these four channels are unaffected — they 
 - Emergency access via trusted contacts (considered during planning, dropped — recovery key is the sole backup path).
 - Passkey storage and Android Credential Manager — 4.3.2 requires only that the autofill implementation not foreclose it.
 
+**Deferred from the launch gate rather than from the product.** The four items below were conditions of launch in v1.3 and are now v2 (see 8 for the reasoning). They are recorded here so that "deferred" stays visible rather than becoming "forgotten":
+
+- **Third-party penetration test** (5.1.1). Trigger: revenue coverage or public store distribution, whichever comes first.
+- **Independent cryptographic review** (5.1.1). The highest-leverage item on this list — deferred because it is unaffordable pre-revenue, never because it is optional. It is the first thing bought when v2 triggers.
+- **Formal OWASP MASVS/MASTG assessment** (5.1.1), with the other paid engagements.
+- **Legal entity formation, D-U-N-S, and organization store registration** (Implementation Plan 6.3). This has direct consequences for Google Play distribution and for personal liability; both are recorded there.
+
 ---
 
 ## 8. Resolved Decisions
@@ -466,6 +497,9 @@ The questions previously open in this section have been decided. Recorded here w
 | **Autofill vs. auto-lock conflict** | Auto-lock wins; autofill authenticates per request against a locked vault and never extends the timer | 4.3.3 |
 | **Store account registration** | **Organization**, not individual — requires a legal entity and a D-U-N-S number | Implementation Plan 6.3 |
 | **Store review account** | One permanently entitled account provisioned for reviewers; a second documented exception to purchase-first | 4.5 |
+| **Third-party pentest and cryptographic review** | **Deferred to v2.** v1 launches on the free automated and self-directed testing only | 5.1.1, 7 |
+| **Legal entity formation** | **Deferred to v2.** v1 operates without one; consequences recorded in Implementation Plan 6.3 | 7 |
+| **Claims about security validation** | Prohibited until the v2 engagements complete | 5.1.2 |
 
 **Password model — a reversal, recorded because the earlier decision was marked settled.** Version 1.2 specified a separate account login password alongside the master password, on the reasoning that separation made a forgotten login a routine reset rather than vault loss. That reasoning was sound as far as it went, but it overstated the case: one password is fully compatible with zero knowledge, provided the server-facing authentication value is derived client-side under different parameters and never equals the wrapping key. This is what the established products in this category do, and the two-level key hierarchy in Implementation Plan 2.1 already supports it without modification.
 
@@ -477,6 +511,16 @@ The cost is accepted and named: there is no email-based password reset that rest
 
 Two mitigations make this materially cheaper than it sounds, and both are already in the design: Paddle is merchant of record, which puts statutory withdrawal rights, tax, and much consumer-law compliance on Paddle rather than on SecretPass; and the 30-day automatic refund is more generous than most jurisdictions require, so the commercial terms are unlikely to be the thing that draws a complaint. Book the review early enough that any required changes land as a routine Terms update under Section 10, rather than as a response to a complaint.
 
+**Launching without external security validation — the largest trade in this document.** v1.3 made the third-party penetration test and independent cryptographic review conditions of launch (5.1.1). They are now deferred to v2, and the reasoning deserves recording as carefully as the reasoning that originally put them there.
+
+The arithmetic decided it. The two engagements cost roughly $13,000–35,000 against a running cost of about $26 per month (Implementation Plan 6.1), and the annual pentest repeat alone needs roughly 245 subscribers to fund from revenue. Sequencing an unfunded $13,000–35,000 gate ahead of any evidence that the product sells means the most likely outcome is that the review is never paid for at all — because the product never launches. Testing demand first and buying validation out of revenue is the only sequence in which the review actually happens.
+
+What makes this defensible rather than merely cheap is that **the deferral is bounded on three sides**: the free controls in 5.1.1 are not deferred and remain a hard gate; 5.1.2 forbids claiming validation that has not happened; and 7 fixes a trigger — revenue coverage or public store distribution, whichever comes first — so v2 is a commitment rather than an intention.
+
+What is genuinely given up, stated plainly: the split derivation in 4.5 is new in this version, it is the one place the password model touches the zero-knowledge boundary, and a mistake in it would be invisible to every test v1 runs. No automated control catches a design flaw of that shape. That is the residual risk, nothing in the v1 gate mitigates it, and it is why the cryptographic review is named first in the v2 list rather than sorted among the others.
+
 ## 9. Still Open
 
-- Nothing blocking. New questions get added here as they arise.
+- **Will Paddle onboard the founder as an individual or sole trader?** With entity formation deferred (7), this is the one unanswered question that can invalidate a design rather than adjust it — Phase 4 assumes Paddle for provisioning, entitlement, refunds and tax, and this plan carries no fallback processor. Confirm in Phase 0, before Phase 4 work begins.
+- **Does v1 ship to Google Play, or stay web-only?** Without an entity, a Play listing triggers the 12-tester/14-day closed-testing gate and publishes the founder's legal name and address (Implementation Plan 6.3). Web-only removes both, and removes Phase 2.6 with them. Not blocking until Phase 5e.
+- New questions get added here as they arise.

@@ -1,7 +1,7 @@
 # SecretPass — Implementation Plan
 
-**Version:** 1.2 (Draft)
-**Companion to:** SecretPass Requirements Document v1.3
+**Version:** 1.3 (Draft)
+**Companion to:** SecretPass Requirements Document v1.4
 **Last updated:** 14 August 2026
 
 > **On estimates:** this plan carries no effort or duration estimates, by decision. The build is intended to move fast, and phase-level week counts would only invite planning against numbers nobody intends to hold to. What the plan does carry is **ordering**, which matters more — see Section 5. The only durations recorded anywhere are other people's clocks (D-U-N-S issuance, penetration-test scheduling, store review, Google Play's 14-day testing rule), because those are not compressible by working faster.
@@ -134,7 +134,8 @@ Row-Level Security (RLS) policies in Supabase ensure a user can only ever read/w
 
 ### Phase 0 — Foundations
 
-- **Start the organization registration on day one.** It is the longest-lead item in the whole plan and nothing else in the build depends on it, which is precisely why it gets forgotten until it is the only thing standing between a finished app and a store listing. The chain is: form the legal entity → apply for the D-U-N-S number (issued in one to two weeks, and not compressible) → complete Google Play organization verification. Registering as an organization rather than an individual also exempts the Play account from the closed-testing gate described in Section 6.3. See that section for the full reasoning.
+- **Confirm Paddle will onboard you in your current legal form — before any Phase 4 work.** With entity formation deferred to v2 (6.3), this replaces organization registration as the Phase 0 external dependency. It is faster but harder: Paddle onboards sole traders and individuals in many jurisdictions under stricter KYC, acceptance is not guaranteed, and this plan carries no fallback processor. Provisioning, entitlement, refunds and tax all assume Paddle, so a decline invalidates Phase 4's design rather than delaying it.
+- ~~**Start the organization registration on day one.**~~ **Deferred to v2 (6.3)** along with the legal entity. The chain — entity formation → D-U-N-S issuance → Play organization verification — moves with the store launch. Read 6.3 before treating this as free: it is the cheapest deferred item in the plan and the only one that protects the founder rather than the user.
 - Repo setup, CI/CD skeleton, Flutter project scaffolding for **Web and Android** targets.
 - **Turn on the automated security tooling now** (see Phase 5a). Retrofitting secret scanning after a key has already been committed to history is a much worse day.
 - Supabase project setup: Auth, Postgres schema, RLS policies.
@@ -235,7 +236,9 @@ The operator holds one account that carries both roles: a normal vault, and cons
 
 ### Phase 5 — Security testing & launch prep (do not skip, and do not run concurrently with shipping)
 
-Security testing is not one task at the end — the automated half runs from Phase 0 onward, and this phase is where the manual half happens.
+Security testing is not one task at the end — the automated half runs from Phase 0 onward, and this phase is where the rest happens.
+
+**Scope change in v1.3 of this plan:** the two paid engagements that used to head 5c are **deferred to v2** per Requirements 5.1.1 and 7. Everything else in this phase is free, and none of it is deferred. 5a and 5b are unchanged, 5c becomes entirely self-directed, 5d narrows, and 5e gains the disclosure check.
 
 **5a. Set up in Phase 0, running continuously**
 - SAST in CI: Semgrep or CodeQL on the Flutter app, extension, and backend functions.
@@ -249,10 +252,11 @@ Security testing is not one task at the end — the automated half runs from Pha
 - Write the threat model and the cryptographic design document. Reviewers cost less and find more when they aren't reverse-engineering your intent.
 - Freeze scope. Don't ship features during the review window.
 
-**5c. Manual testing — mostly other people's clocks, so book early**
-- **Third-party penetration test.** Reputable firms schedule weeks out and that lead time is theirs, not something a fast build can compress. Book it well before you need it. Scope: sync API, auth and session handling, activation and recovery flows, the Paddle webhook path, the admin console, the extension, and the Android autofill service.
-- **Independent cryptographic review** by someone who didn't write the code. This is the single highest-leverage spend on the whole project. Point them at the split derivation in 2.1 first — the single-password model puts a value derived from the master password on the wire, and whether that value is safely separated from the wrapping key is the first thing a reviewer should be asked to confirm.
-- **Mobile testing** against OWASP MASVS/MASTG, Android only for v1 — MobSF for the automated pass, manual work for Keystore usage, biometric key invalidation, background-snapshot leakage, clipboard, and logging.
+**5c. Self-directed manual testing — the v1 gate. No external clocks, no cost.**
+
+The two paid engagements that previously headed this list — third-party penetration test and independent cryptographic review — are **deferred to v2** (Requirements 5.1.1). What remains is everything you can run yourself, and it is now the whole of v1's manual security testing. Treat it as the gate it has become rather than the supplement it used to be.
+
+- **Mobile testing** against OWASP MASVS/MASTG, Android only and only if Android ships in v1 — MobSF for the automated pass, manual work for Keystore usage, biometric key invalidation, background-snapshot leakage, clipboard, and logging. The checklist is public; only the formal assessment is deferred.
 - **Extension review**: content-script isolation, message passing, and autofill domain matching. Verify the extension will not fill credentials into a look-alike domain — this is the highest-severity bug class an extension can ship.
 - **Autofill review, Android**: Digital Asset Links verification against a purpose-built look-alike app, the per-app confirmation fallback, and the lock-boundary behaviour from Requirements 4.3.3 — that a locked vault prompts, that the key is not retained after the fill, and that servicing a fill does not extend the inactivity timer.
 - **Business-logic testing**: refund abuse, entitlement bypass, activation-token reuse, subscription-state races.
@@ -260,11 +264,13 @@ Security testing is not one task at the end — the automated half runs from Pha
 
 **5d. Remediate and re-test**
 - Fix critical and high findings. Medium findings get an owner and a date.
-- **Re-test by the original tester** — self-certifying a fix is how fixes turn out to be incomplete.
-- Retain reports and remediation evidence.
+- Re-test self-directed findings by re-running the 5a suite. This is weaker than independent re-testing, and it is the reason 5a is a hard gate rather than a convenience: with no external tester in v1, the automated suite is the only thing standing between a fix and the belief that it worked.
+- **Re-test by the original tester moves to v2** with the engagements it belongs to. Self-certifying a fix is how fixes turn out to be incomplete — note that v1 is self-certifying by construction, and scope the launch accordingly.
+- Retain reports and remediation evidence. They are the starting point for the v2 review, not throwaway artifacts.
 
 **5e. Before you announce**
-- Publish a responsible disclosure policy with a security contact. Researchers will find things; give them a route that isn't the contact form.
+- **Check every published claim against Requirements 5.1.2.** No "audited", "penetration tested", "security reviewed", or "third-party verified" anywhere — marketing site, store listings, Terms, Privacy Policy, in-app copy, ad creative. Describing the design is fine; implying external validation is not. This is a five-minute review and the highest-consequence item in the phase.
+- Publish a responsible disclosure policy with a security contact. Researchers will find things; give them a route that isn't the contact form. **This matters more without a pentest, not less** — in v1, researchers are the external review.
 - Write the incident response plan: who's notified, how users are told, what the disclosure timeline is. Writing it during an incident is too late.
 - **Play Store submission package**: listing copy (stating that accounts are created on the website, per Requirements 6.1), phone and tablet screenshots, feature graphic, icon, content rating questionnaire, target audience declaration, Data safety form, privacy policy URL, and working App access credentials for reviewers. Password managers get extra scrutiny, so expect review cycles rather than one clean pass. Apple's review joins this list when iOS ships — its reputation for scrutiny on credential-storage apps is part of why iOS is sequenced second rather than run in parallel.
 - **Chrome Web Store submission**: a password manager requires broad host permissions, which is the most heavily scrutinised review category. Write the permission justifications before submitting rather than in response to a rejection.
@@ -280,12 +286,12 @@ This plan carries no effort estimates. What it does assert is **order**, and the
 1. **The key hierarchy is validated in Phase 0**, before anything depends on it. Collapsing the two levels into one is the single most expensive mistake available, and it surfaces only when the recovery path is built.
 2. **The split derivation is validated in Phase 0**, in the same session, for the same reason — the single-password model is only safe if the auth value and the wrapping key are genuinely independent.
 3. **The autofill/auto-lock resolution is decided in Phase 0**, before either Phase 2.4 or Phase 2.6 is built. Deciding it afterwards means rewriting one of them.
-4. **Security review (Phase 5) is a gate, not a parallel track.** Freeze scope during the review window; shipping features into an active audit invalidates the audit.
+4. **The v1 security gate (Phase 5a–5d) is still a gate, not a parallel track** — even now that it is self-directed. Freeze scope while you run it. When the v2 engagements are booked the original rule returns with full force: shipping features into an active audit invalidates the audit.
 
 **Three things are not compressible by working faster, because they run on other people's clocks.** Start them early and let them run alongside the build:
 
-- **Organization registration → D-U-N-S issuance → Play verification.** Begin in Phase 0 (see 6.3).
-- **Penetration test and cryptographic review scheduling.** Reputable firms book out, and the post-remediation re-test in 5d is a second appointment, not a follow-up email.
+- ~~**Organization registration → D-U-N-S issuance → Play verification.**~~ Moves to v2 with the entity (6.3). Its Phase 0 replacement is **Paddle onboarding confirmation** — faster, but a hard dependency for Phase 4 rather than a slow one.
+- ~~**Penetration test and cryptographic review scheduling.**~~ Moves to v2. When they are booked, remember the post-remediation re-test is a second appointment rather than a follow-up email, and that this lead time returns to the critical path at that moment.
 - **Store review cycles**, including rejection round-trips — and, if the Play account were ever registered to an individual rather than an organization, the 12-tester/14-day closed testing gate on top (6.3).
 
 Everything else is yours to compress. These are not, which is exactly why they start first.
@@ -319,27 +325,58 @@ Everything else is yours to compress. These are not, which is exactly why they s
 | Paid-only model suppressing signups for a high-trust product | The 30-day money-back guarantee is the only risk-reversal on offer; make it prominent at checkout and in the activation email |
 | Accounts paid for but never provisioned (closed tab, dropped network) | Provision on the Paddle webhook, not the redirect; monitor for paid subscriptions with no matching account row |
 | Users locked out by a mistyped checkout email | Self-service resend page keyed on the payment email, plus a support path |
+| **Launching without external cryptographic review** | Accepted, bounded, recorded in Requirements 8. The free controls in 5a are a hard gate; Requirements 5.1.2 forbids claiming validation not performed; Requirements 7 fixes the v2 trigger. **Not mitigated:** a design flaw in the 2.1 split derivation would be invisible to every v1 test. Keep the launch surface small and the disclosure honest until v2 |
+| **Marketing copy claims a security audit that never happened** | Requirements 5.1.2; review every published surface before announcing (5e). The one consequence of the deferral that carries direct legal exposure rather than only risk |
+| **Paddle declines to onboard an individual or sole trader** | Verify in Phase 0, before any Phase 4 work. No fallback processor exists in this plan, and provisioning, entitlement, refunds and tax all assume Paddle. The highest-impact consequence of deferring the entity (6.3) |
+| **Personal liability for a security incident, with no entity** | Unmitigated by design — see 6.3. Keep v1 distribution to users who knowingly opted into a pre-audit product, and form the entity before public store distribution |
+| **Play listing publishes the founder's legal name and address** | Consequence of individual store registration (6.3). Avoided entirely by keeping v1 web-only; unavoidable on Play without an entity |
 
 ---
 
 ## 6. Store & Operational Costs
 
-Earlier versions of this plan and the Requirements never put a number on what it costs to *be* in a store. The direct fees turn out to be trivial; the constraints attached to them are not, and those are the part worth planning around.
+Earlier versions of this plan and the Requirements never put a number on what it costs to *be* in a store. The store fees turn out to be trivial; the constraints attached to them are not, and neither is the cost of running the service behind them. 6.1 now separates the three.
 
-### 6.1 Direct fees (v1)
+### 6.1 What it costs to launch and to run (v1)
+
+Two tables, because the previous single one mixed one-time and recurring costs and then totalled only the one-time half — which understated what it costs to *run* the service badly enough to mislead.
+
+**One-time**
 
 | Item | Cost | Notes |
 |---|---|---|
-| Google Play Console | **$25**, one-time | Never charged again |
 | Chrome Web Store | **$5**, one-time | Developer registration |
-| Domain | ~$12/year | TLS free via the host |
-| Web hosting (Flutter web + marketing site) | $0–20/month | Cloudflare Pages, Netlify or Vercel free tiers cover launch traffic comfortably |
-| Legal entity formation | Varies by jurisdiction | Required for organization registration — see 6.3 |
-| D-U-N-S number | Free | One to two weeks to issue |
+| Google Play Console | **$25**, one-time | Never charged again. Only if shipping to Play — see 6.3 for what that costs without an entity |
+| Legal entity formation | **$0 in v1** | Deferred to v2 (6.3). $50–800 when it happens |
+| D-U-N-S number | Free | Deferred with the entity. One to two weeks to issue, and not compressible |
+| Third-party pentest + cryptographic review | **$0 in v1** | Deferred to v2 (Requirements 5.1.1). $13,000–35,000 when it happens |
 | ~~Apple Developer Program~~ | **$99/year — not a v1 cost** | Starts when iOS work starts. Recurring, and lapsing it pulls shipped apps from sale |
 | ~~Mac hardware or cloud macOS~~ | **Not a v1 cost** | Xcode is the only toolchain that signs an iOS build, and it is macOS-only. Deferring iOS defers this entirely |
 
-**Total to launch v1: roughly $42 in fees**, plus entity formation and hosting. Deferring iOS is what removes both the recurring $99 and the Mac from the launch budget — the two largest platform costs in the original scope.
+**Total one-time to launch v1: $5 web-only, or $30 including Play.**
+
+**Recurring**
+
+| Item | Monthly | Notes |
+|---|---|---|
+| Supabase Pro | **$25** | Not optional. `wrapped_keys` holds the only server-side copy of both wraps of every vault key (2.2); the free tier has no daily backups, and losing that table locks every user out of every new device, permanently and unrecoverably |
+| Domain | **$1** | ~$12/year, TLS free via the host |
+| Web hosting — app, marketing site, admin console | **$0** | Cloudflare Pages / Netlify free tiers cover all three at launch traffic |
+| Transactional email | **$0** | Free tiers run to ~3,000 emails/month; v1 volume is a small fraction of that. ~$20/month at scale |
+| CI, SAST, dependency and secret scanning | **$0** | Semgrep, Dependabot, gitleaks. The whole of 5a is free, which is exactly why none of it is deferred |
+| Error monitoring | **$0** | Free tier |
+| Entity upkeep | **$0** in v1 | Registered agent ~$50–300/year from v2 |
+| **Total** | **~$26/month** | Flat. Supabase Pro includes 100k MAU and 8 GB, and vault blobs are small, so marginal cost per user is effectively zero well past 10,000 users |
+
+**Unit economics.** Paddle takes 5% + 50¢, so a $5/month subscriber nets **$4.25/month** (15% effective) and a $50/year subscriber nets **$47/year**, or $3.92/month (6% effective). The fixed 50¢ makes the monthly plan proportionally the more expensive rail, but a monthly subscriber who stays twelve months still nets more than an annual one ($51 vs $47) — the 17% annual discount costs more than the fee it saves. Annual wins on cash timing rather than margin, and that matters far more below ~50 subscribers, where ten annual subscribers pre-fund well over a year of running costs.
+
+**Breakeven: 7 subscribers.** $26 ÷ $4.25 = 6.1 monthly, or 6.6 annual. Past that, contribution margin is roughly 95%, because costs are flat and marginal cost per user is ~$0.
+
+**The number this section deliberately does not hide:** funding the deferred v2 engagements from revenue needs roughly **245 subscribers** for the annual penetration test alone ($8,000–20,000/year against ~$49 net per subscriber-year). Between 7 and 245 subscribers the product is profitable on a cash basis and still cannot afford its own security review. That gap is the central financial fact of this plan, and it is why Requirements 7 ties v2 to a revenue trigger rather than a date.
+
+**Not counted anywhere above: founder time.** Every figure here is contribution margin against zero labour cost. At 1,000 subscribers this is roughly $36,000/year — a side income, not a salary.
+
+**Also not counted: paid acquisition.** Requirements 6.1 commits to it as one of four launch channels and explicitly accepts negative margin per install early on. It is a deliberate, open-ended spend with no budget in either document, and it will be the largest controllable line item at launch.
 
 ### 6.2 The cost that isn't being paid
 
@@ -347,17 +384,21 @@ Apple and Google take **15–30% of in-app purchases**. The Paddle-only design i
 
 Worth stating explicitly in both documents, because the conversion cost is highly visible — every user who finds the app before the website is a felt loss — while the commission saving is invisible and never shows up as a line item. A plan that only records the visible half of that trade will eventually be re-litigated by someone reading the funnel numbers.
 
-### 6.3 Organization registration, and why it is on the critical path
+### 6.3 Organization registration — deferred to v2, and what that costs
 
-Store accounts are registered to an **organization**, not an individual. Three reasons:
+Entity formation, D-U-N-S issuance and Play organization verification are **deferred to v2** (Requirements 7). The three reasons the earlier plan put them on the critical path have not stopped being true — they have turned from requirements into consequences, and each needs a v1 answer.
 
-1. **It exempts the Play account from the closed-testing gate.** Personal developer accounts created after November 2023 must run a closed test with **12 testers who genuinely use the app for 14 continuous days** before production access is granted (the requirement was 20 testers until December 2024). Google checks for real engagement, not installs. For a pre-audit password manager this means asking twelve people to put credentials into an unaudited build — an unappealing proposition on both sides. Organization accounts skip the gate.
-2. **It keeps personal identity off the store listing.** Individual enrollment publishes the developer's legal name as seller, and Play requires a verified contact address on the listing. For a paid security product a company name is both a trust signal and a privacy measure.
-3. **Paddle requires business details anyway** as merchant of record, so a single entity serves billing and both stores.
+**1. The Play closed-testing gate now applies.** Personal developer accounts created after November 2023 must run a closed test with **12 testers who genuinely use the app for 14 continuous days** before production access is granted (the requirement was 20 testers until December 2024). Google checks for real engagement, not installs. Organization accounts skip the gate; individual accounts do not. For a pre-audit password manager, clearing it means asking twelve people to put real credentials into an unaudited build — which is exactly the population Requirements 5.1.2 requires be told what they are opting into.
 
-The chain is **entity formation → D-U-N-S issuance → Play organization verification**, and only the first step is under your control. It blocks nothing else in the build — which is exactly why it gets forgotten until it is the last thing standing between a finished app and a listing. Start it in Phase 0.
+**2. The listing publishes the founder's legal name and a verified contact address.** Individual enrollment names the developer as seller. For a paid security product this is both a trust cost and a personal privacy cost, and it is public and durable.
 
-One coupling worth noting: the entity's jurisdiction is what a governing-law clause in the Terms would name. Requirements 8 defers legal review until after launch; choosing the entity with that eventual review in mind costs nothing now and avoids re-papering later.
+**3. Paddle onboarding becomes the hard dependency.** Paddle requires business details as merchant of record. It onboards sole traders and individuals in many jurisdictions, but KYC is stricter and acceptance is not guaranteed — and this plan has no fallback processor. **Confirm acceptance in Phase 0, before any Phase 4 work**, because provisioning, entitlement, refunds and tax handling all assume Paddle.
+
+**The v1 answer to (1) and (2) is to keep v1 web-only.** Both are consequences of *the Play listing*, not of the missing entity. Web has no gatekeeper, no review, no closed-testing gate, no published seller identity, and no $25 (6.4) — and Phase 1 already ships web first. Deferring the Play launch alongside the entity costs one platform and removes both problems outright. It also defers Phase 2.6, the largest block of non-Flutter work in the build.
+
+**The consequence with no v1 answer is liability.** Without an entity there is no limited liability, so a security incident reaches the founder personally. Nothing in this plan mitigates that. Weigh it against the price: entity formation is $50–800, roughly 2% of the deferred audit cost, and it is the only deferred item that protects the founder rather than the user. If one item comes back from v2 early, this is the one.
+
+**Two couplings to remember at v2.** The entity's jurisdiction is what a governing-law clause in the Terms would name, and Requirements 8 already defers legal review until after launch — so choosing the entity with that review in mind avoids re-papering. And D-U-N-S issuance takes one to two weeks and is not compressible, so it returns to the critical path the moment a Play listing is back on the roadmap.
 
 ### 6.4 What each deployment target actually involves
 
@@ -373,8 +414,8 @@ One coupling worth noting: the entity's jurisdiction is what a governing-law cla
 
 ## 7. Suggested Immediate Next Steps
 
-1. **Start the entity formation and D-U-N-S application.** External clock, blocks nothing, will otherwise become the launch blocker (6.3).
+1. **Confirm Paddle will onboard you in your current legal form.** This replaces entity formation as the Phase 0 external dependency (6.3). Faster, but a hard blocker rather than a slow one: if Paddle declines, Phase 4 has no design.
 2. Stand up the Supabase project and validate the Argon2id + libsodium round-trip in a throwaway Flutter script — including the **split derivation** of wrapping key and auth value under distinct salts (2.1).
 3. Decide the autofill/auto-lock resolution (Requirements 4.3.3) on paper before Phase 2.4 or 2.6 begins.
 4. Build the unlock + vault CRUD flow end-to-end on Web only, before touching Android.
-5. Get one outside pair of eyes (even informally) on the encryption design — specifically the single-password split derivation — before writing a lot more code around it.
+5. **Write the cryptographic design document early**, rather than at Phase 5b. With the independent review deferred to v2 (Requirements 5.1.1), it stops being a document you hand a reviewer and becomes the only forcing function on the 2.1 split derivation — the one design decision in this plan that no v1 test can validate. Writing it costs nothing, and it is what makes the v2 review cheap when it is finally bought.
